@@ -1,2 +1,2 @@
 # myesi-user-service
-User Service of MyESI
+Manages user profiles, access control (RBAC), authentication, and SSO/MFA integration.
