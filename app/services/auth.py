@@ -9,11 +9,14 @@ from app.db import session as db_session
 from app.db.models import User
 from app.schemas.user import TokenData
 
+print(">>> security.py loaded")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+print(">>> CryptContext initialized successfully")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/users/login")
 
 
 def get_password_hash(password: str) -> str:
+    print(password)
     return pwd_context.hash(password)
 
 
