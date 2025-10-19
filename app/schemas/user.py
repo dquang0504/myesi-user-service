@@ -6,6 +6,12 @@ from datetime import datetime
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=255)
+    role: str
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=255)
 
 
 class UserOut(BaseModel):
@@ -19,7 +25,6 @@ class UserOut(BaseModel):
         orm_mode = True
 
 
-# token response
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

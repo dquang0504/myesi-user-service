@@ -24,8 +24,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_access_token(sub: str, expires_delta: timedelta | None = None):
-    to_encode = {"sub": sub}
+def create_access_token(sub: str, role: str, expires_delta: timedelta | None = None):
+    to_encode = {"sub": sub, "role": role}
     expire = datetime.utcnow() + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
