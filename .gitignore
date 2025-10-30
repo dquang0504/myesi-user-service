@@ -4,3 +4,4 @@ venv/
 .ruff_cache/
 __pycache__
 bin/act
+.secrets

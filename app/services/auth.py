@@ -9,9 +9,7 @@ from app.db import session as db_session
 from app.db.models import User
 from app.schemas.user import TokenData
 
-print(">>> security.py loaded")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-print(">>> CryptContext initialized successfully")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/users/login")
 
 
@@ -25,11 +23,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(sub: str, role: str, expires_delta: timedelta | None = None):
-    to_encode = {"sub": sub, "role": role}
     expire = datetime.utcnow() + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    to_encode.update({"exp": expire})
+    to_encode = {"sub": sub, "role": role, "exp": int(expire.timestamp())}
+    print(settings.SECRET_KEY)
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
 
 
@@ -59,3 +57,32 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
         )
     return user
+
+
+def create_refresh_token(sub: str, expires_delta: timedelta | None = None):
+    expire = datetime.utcnow() + (
+        expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    )
+    to_encode = {"sub": sub, "exp": int(expire.timestamp()), "type": "refresh"}
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
+
+
+def decode_refresh_token(token: str) -> TokenData:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        if payload.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token type",
+            )
+        sub: str = payload.get("sub")
+        if sub is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
+            )
+        return TokenData(sub=sub, exp=payload.get("exp"))
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
