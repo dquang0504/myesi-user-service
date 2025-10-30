@@ -1,6 +1,6 @@
 from operator import or_
 from typing import Optional
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.db import session as db_session
 from app.db.models import User
@@ -49,9 +49,11 @@ def get_all_users(
         query = query.filter(
             or_(
                 User.email.ilike(f"%{search}%"),
-                getattr(User, "name", None).ilike(f"%{search}%")
-                if hasattr(User, "name")
-                else False,
+                (
+                    getattr(User, "name", None).ilike(f"%{search}%")
+                    if hasattr(User, "name")
+                    else False
+                ),
             )
         )
 
@@ -98,6 +100,7 @@ def get_all_users(
 
     return {"data": {"users": user_list, "pagination": pagination}}
 
+
 # ----- ADMIN UPDATE USER -----
 @router.put("/users/{user_id}")
 def update_user(
@@ -110,10 +113,12 @@ def update_user(
     Only accessible by admin.
     """
 
-   # Find user (excluding admins)
+    # Find user (excluding admins)
     user = db.query(User).filter(User.id == user_id, User.role != "admin").first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found or cannot update admin account")
+        raise HTTPException(
+            status_code=404, detail="User not found or cannot update admin account"
+        )
 
     # Update provided fields only
     update_data = payload.dict(exclude_unset=True)
@@ -121,7 +126,11 @@ def update_user(
         raise HTTPException(status_code=400, detail="No valid fields to update")
 
     if "email" in update_data:
-        existing_user = db.query(User).filter(User.email == update_data["email"], User.id != user_id).first()
+        existing_user = (
+            db.query(User)
+            .filter(User.email == update_data["email"], User.id != user_id)
+            .first()
+        )
         if existing_user:
             raise HTTPException(status_code=400, detail="Email already exists")
 

@@ -50,6 +50,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return new_user
 
+
 @router.post("/login", response_model=LoginResponse)
 def login(payload: UserLogin, response: Response, db: Session = Depends(get_db)):
     """
@@ -58,7 +59,7 @@ def login(payload: UserLogin, response: Response, db: Session = Depends(get_db))
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     # Update last login time
     user.last_login = datetime.utcnow()
     db.add(user)
@@ -76,8 +77,8 @@ def login(payload: UserLogin, response: Response, db: Session = Depends(get_db))
     refresh_token = create_refresh_token(
         sub=user.email, expires_delta=refresh_token_expires
     )
-    
-    print("This is refresh token: ",refresh_token)
+
+    print("This is refresh token: ", refresh_token)
 
     # === Set HttpOnly cookie ===
     response.set_cookie(
@@ -103,9 +104,12 @@ def login(payload: UserLogin, response: Response, db: Session = Depends(get_db))
             "last_login": user.last_login,
         },
     }
-    
+
+
 @router.post("/refresh-token", response_model=Token)
-def refresh_access_token(request: Request, response: Response, db: Session = Depends(get_db)):
+def refresh_access_token(
+    request: Request, response: Response, db: Session = Depends(get_db)
+):
     """
     Refresh access token using refresh token from cookie.
     """
@@ -136,9 +140,10 @@ def logout(current_user=Depends(get_current_user)):
     (Stateless JWT => client only needs to delete token.)
     """
     try:
-        return{"success": True, "message": "Logout successful"}
+        return {"success": True, "message": "Logout successful"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Logout failed: {str(e)}")
+
 
 @router.get("/me", response_model=UserOut)
 def me(current_user=Depends(get_current_user)):
