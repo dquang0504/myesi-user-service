@@ -10,8 +10,9 @@ class UserCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=255)
+    organization_id: int
     role: Optional[str] = "developer"
-    status: Optional[str] = "active"
+    is_active: bool
 
 
 class UserLogin(BaseModel):
@@ -23,7 +24,7 @@ class UserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     email: Optional[EmailStr] = None
     role: Optional[str] = None
-    status: Optional[str] = None
+    is_active: bool
 
 
 # ---------------------------
@@ -34,7 +35,8 @@ class UserOut(BaseModel):
     name: str
     email: EmailStr
     role: str
-    status: str
+    is_active: bool
+    organization_id: int
     created_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
 
