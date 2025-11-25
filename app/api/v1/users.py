@@ -1,7 +1,7 @@
+import logging
 from fastapi import APIRouter, Depends, Request, Response, status, HTTPException
-from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from app.db import session as db_session
+from app.db.session import get_db, AsyncSession
 from app.db.models import User
 from app.schemas.user import LoginResponse, UserCreate, UserLogin, UserOut, Token
 from app.services.auth import (
@@ -13,28 +13,18 @@ from app.services.auth import (
     verify_password,
 )
 from app.core.config import settings
+from sqlalchemy.future import select
+from sqlalchemy.exc import DBAPIError
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
-def get_db():
-    db = db_session.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
-    """
-    Create a new user account.
-    - Check if email already exists.
-    - Hash password before storing.
-    """
-    existing_user = db.query(User).filter(User.email == payload.email).first()
-    if existing_user:
+async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == payload.email))
+    if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
+
     hashed_pw = get_password_hash(payload.password)
 
     new_user = User(
@@ -42,34 +32,63 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         email=payload.email,
         hashed_password=hashed_pw,
         role=payload.role or "developer",
-        status=payload.status or "active",
+        organization_id=payload.organization_id,
+        is_active=payload.is_active,
     )
 
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+
+    try:
+        await db.commit()
+
+    except DBAPIError as e:
+        msg = str(e.orig)
+
+        # CHUẨN NHẤT: match substring từ PostgreSQL trigger
+        if "User limit exceeded" in msg:
+            raise HTTPException(
+                status_code=429,
+                detail="User limit exceeded for your subscription plan. Please upgrade to a better plan to add more users!",
+            )
+
+        raise HTTPException(status_code=500, detail="Database error")
+
+    await db.refresh(new_user)
     return new_user
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: UserLogin, response: Response, db: Session = Depends(get_db)):
+async def login(
+    payload: UserLogin, response: Response, db: AsyncSession = Depends(get_db)
+):
     """
     Authenticate user and return access + refresh tokens.
     """
-    user = db.query(User).filter(User.email == payload.email).first()
+    result = await db.execute(select(User).where(User.email == payload.email))
+    user = result.scalar_one_or_none()
+
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # Update last login time
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403, detail="User is disabled. Please contact an admin!"
+        )
+
+    # Update last login
     user.last_login = datetime.utcnow()
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
 
     # === Access token ===
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        sub=user.email, role=user.role, expires_delta=access_token_expires
+        user_id=user.id,
+        sub=user.email,
+        role=user.role,
+        organization_id=user.organization_id,
+        expires_delta=access_token_expires,
     )
 
     # === Refresh token ===
@@ -78,9 +97,6 @@ def login(payload: UserLogin, response: Response, db: Session = Depends(get_db))
         sub=user.email, expires_delta=refresh_token_expires
     )
 
-    print("This is refresh token: ", refresh_token)
-
-    # === Set HttpOnly cookie ===
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -91,6 +107,14 @@ def login(payload: UserLogin, response: Response, db: Session = Depends(get_db))
         path="/",
     )
 
+    # --- DEBUG LOG ---
+    logging.warning(f"[DEBUG] Set refresh_token cookie: {refresh_token}")
+
+    # --- Optional: inspect all cookies sent in response headers ---
+    for k, v in response.headers.items():
+        if k.lower() == "set-cookie":
+            logging.warning(f"[DEBUG] Response header set-cookie: {v}")
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -99,34 +123,34 @@ def login(payload: UserLogin, response: Response, db: Session = Depends(get_db))
             "name": user.name,
             "email": user.email,
             "role": user.role,
-            "status": user.status,
+            "is_active": user.is_active,
             "created_at": getattr(user, "created_at", None),
             "last_login": user.last_login,
+            "organization_id": user.organization_id,
         },
     }
 
 
 @router.post("/refresh-token", response_model=Token)
-def refresh_access_token(
-    request: Request, response: Response, db: Session = Depends(get_db)
+async def refresh_access_token(
+    request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ):
-    """
-    Refresh access token using refresh token from cookie.
-    """
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Missing refresh token")
 
     token_data = decode_refresh_token(refresh_token)
 
-    user = db.query(User).filter(User.email == token_data.sub).first()
+    result = await db.execute(select(User).where(User.email == token_data.sub))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # Create new access token
     new_access_token = create_access_token(
+        user_id=user.id,
         sub=user.email,
         role=user.role,
+        organization_id=user.organization_id,
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
 
