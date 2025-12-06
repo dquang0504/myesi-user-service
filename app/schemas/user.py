@@ -18,6 +18,7 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=255)
+    two_factor_code: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -25,6 +26,27 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     role: Optional[str] = None
     is_active: bool
+
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=255)
+    email: Optional[EmailStr] = None
+    current_password: Optional[str] = Field(None, min_length=8, max_length=255)
+    current_password: Optional[str] = Field(None, min_length=8, max_length=255)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=8, max_length=255)
+    new_password: str = Field(..., min_length=8, max_length=255)
+
+
+class TwoFactorVerifyRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class TwoFactorSetupResponse(BaseModel):
+    secret: str
+    otp_auth_url: str
 
 
 # ---------------------------
@@ -36,12 +58,13 @@ class UserOut(BaseModel):
     email: EmailStr
     role: str
     is_active: bool
-    organization_id: int
+    organization_id: Optional[int] = None
+    two_factor_enabled: bool
     created_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class Token(BaseModel):
@@ -55,6 +78,7 @@ class LoginResponse(BaseModel):
     token_type: str
     expires_in: Optional[int] = 15 * 60
     user: UserOut
+    two_factor_required: Optional[bool] = False
 
     class Config:
         from_attributes = True
@@ -63,3 +87,7 @@ class LoginResponse(BaseModel):
 class TokenData(BaseModel):
     sub: Optional[str] = None
     exp: Optional[int] = None
+    id: Optional[int] = None
+    role: Optional[str] = None
+    organization_id: Optional[int] = None
+    account_type: Optional[str] = None

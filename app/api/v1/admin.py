@@ -58,13 +58,16 @@ async def admin_dashboard(db: AsyncSession = Depends(get_db)):
     # VULNERABILITIES
     # -------------------------
     total_vulns = (
-        await db.execute(text("SELECT COUNT(*) FROM vulnerabilities"))
+        await db.execute(
+            text("SELECT COUNT(*) FROM vulnerabilities WHERE is_active = TRUE")
+        )
     ).scalar() or 0
 
     vulns_last_week = (
         await db.execute(
             text(
-                "SELECT COUNT(*) FROM vulnerabilities " "WHERE created_at >= :week_ago"
+                "SELECT COUNT(*) FROM vulnerabilities "
+                "WHERE created_at >= :week_ago AND is_active = TRUE"
             ),
             {"week_ago": week_ago},
         )
