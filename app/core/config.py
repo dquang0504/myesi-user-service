@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "replace-with-secure-key"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    NOTIFICATION_SERVICE_URL: str = "http://notification-service:8006"
+    NOTIFICATION_SERVICE_TOKEN: str = ""
 
     # --- GitHub OAuth ---
     GITHUB_CLIENT_ID: str

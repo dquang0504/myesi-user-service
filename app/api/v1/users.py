@@ -32,6 +32,7 @@ from app.schemas.organization import (
     OrganizationInviteAdminRequest,
     OrganizationInviteAdminResponse,
     AdminInviteResult,
+    NotificationSettingsUpdate,
 )
 from app.services.auth import (
     create_access_token,
@@ -48,6 +49,7 @@ from app.core.config import settings
 from sqlalchemy.future import select
 from sqlalchemy.exc import DBAPIError
 import pyotp
+from app.services.notification_client import publish_event
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 org_router = APIRouter(prefix="/api/organizations", tags=["organizations"])
@@ -98,7 +100,10 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
-    payload: UserLogin, response: Response, db: AsyncSession = Depends(get_db)
+    payload: UserLogin,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Authenticate user and return access + refresh tokens.
@@ -116,6 +121,7 @@ async def login(
             )
 
         organization = await db.get(Organization, user.organization_id)
+        org_settings = await db.get(OrganizationSettings, user.organization_id)
         enforce_two_factor = bool(organization and organization.require_two_factor)
         requires_two_factor = enforce_two_factor and not user.two_factor_enabled
 
@@ -137,10 +143,59 @@ async def login(
             if not totp.verify(payload.two_factor_code, valid_window=1):
                 raise HTTPException(status_code=403, detail="Invalid two-factor code.")
 
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        previous_ip = user.last_login_ip
+        previous_login = user.last_login
+
         user.last_login = datetime.utcnow()
+        user.last_login_ip = client_ip
+        user.last_login_user_agent = user_agent
         db.add(user)
         await db.commit()
         await db.refresh(user)
+
+        should_alert = False
+        if (
+            org_settings
+            and org_settings.user_activity_alerts
+            and previous_ip
+            and client_ip
+            and previous_ip != client_ip
+            and previous_login
+        ):
+            if datetime.utcnow() - previous_login <= timedelta(hours=24):
+                should_alert = True
+
+        if should_alert:
+            emails = []
+            if (
+                org_settings.email_notifications
+                and org_settings.admin_email
+                and org_settings.admin_email not in emails
+            ):
+                emails.append(org_settings.admin_email)
+            await publish_event(
+                {
+                    "type": "user.activity.suspicious-login",
+                    "organization_id": user.organization_id or 0,
+                    "user_id": user.id,
+                    "severity": "high",
+                    "payload": {
+                        "user": {
+                            "id": user.id,
+                            "name": user.name,
+                            "email": user.email,
+                        },
+                        "current_ip": client_ip,
+                        "previous_ip": previous_ip,
+                        "user_agent": user_agent,
+                        "target_role": "admin",
+                        "action_url": "/admin/user-management",
+                    },
+                    "emails": emails,
+                }
+            )
 
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
@@ -168,6 +223,15 @@ async def login(
             max_age=refresh_token_expires.total_seconds(),
             path="/",
         )
+
+        response.headers["X-Internal-User-Id"] = str(user.id)
+
+        # IMPORTANT: never set empty string for org id
+        if user.organization_id is not None:
+            response.headers["X-Internal-Org-Id"] = str(user.organization_id)
+        else:
+            # ensure header is absent rather than empty
+            response.headers.pop("X-Internal-Org-Id", None)
 
         logging.warning(f"[DEBUG] Set refresh_token cookie: {refresh_token}")
         for k, v in response.headers.items():
@@ -231,6 +295,9 @@ async def login(
         max_age=refresh_token_expires.total_seconds(),
         path="/",
     )
+    response.headers["X-Internal-User-Id"] = str(owner.id)
+    # IMPORTANT: do not emit empty org id
+    response.headers.pop("X-Internal-Org-Id", None)
 
     logging.warning(f"[DEBUG] Set refresh_token cookie: {refresh_token}")
     for k, v in response.headers.items():
@@ -505,6 +572,46 @@ async def update_organization_settings(
     return settings
 
 
+@org_router.patch(
+    "/{org_id}/settings/notifications", response_model=OrganizationSettingsOut
+)
+async def toggle_notification_settings(
+    org_id: int,
+    payload: NotificationSettingsUpdate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    result = await db.execute(
+        select(OrganizationSettings).where(
+            OrganizationSettings.organization_id == org_id
+        )
+    )
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = OrganizationSettings(organization_id=org_id)
+        db.add(settings)
+        await db.flush()
+
+    updates = payload.dict(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No notification flags provided")
+
+    for key, value in updates.items():
+        setattr(settings, key, value)
+
+    db.add(settings)
+    await db.commit()
+    await db.refresh(settings)
+    return settings
+
+
 @org_router.get("/{org_id}", response_model=OrganizationOut)
 async def get_organization(org_id: int, db: AsyncSession = Depends(get_db)):
     """
@@ -592,7 +699,7 @@ async def create_organization(
     await db.refresh(new_org)
 
     return OrganizationCreateResponse(
-        organization=OrganizationOut.model_validate(new_org),
+        organization=OrganizationOut.model_validate(new_org, from_attributes=True),
         invited_admin=invited_admin,
     )
 
