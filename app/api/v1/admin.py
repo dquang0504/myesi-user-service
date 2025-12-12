@@ -6,25 +6,45 @@ from app.db.models import User
 from app.schemas.admin import DashboardStatsResponse, DashboardFieldTrend, SBOMField
 from app.schemas.user import UserUpdate
 from sqlalchemy import or_, select, func, text
+from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 # ----- ADMIN DASHBOARD -----
 @router.get("/dashboard", response_model=DashboardStatsResponse)
-async def admin_dashboard(db: AsyncSession = Depends(get_db)):
+async def admin_dashboard(
+    current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+    if current_user.organization_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization context is required for admin dashboard",
+        )
+    org_id = current_user.organization_id
+    print("This is org_id: ", org_id)
     now = datetime.utcnow()
     week_ago = now - timedelta(days=7)
 
     # -------------------------
     # USERS
     # -------------------------
-    total_users = (await db.execute(text("SELECT COUNT(*) FROM users"))).scalar() or 0
+    total_users = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM users WHERE organization_id = :org_id"),
+            {"org_id": org_id},
+        )
+    ).scalar() or 0
 
     users_last_week = (
         await db.execute(
-            text("SELECT COUNT(*) FROM users WHERE created_at >= :week_ago"),
-            {"week_ago": week_ago},
+            text(
+                "SELECT COUNT(*) FROM users WHERE organization_id = :org_id AND created_at >= :week_ago"
+            ),
+            {"org_id": org_id, "week_ago": week_ago},
         )
     ).scalar() or 0
 
@@ -38,13 +58,20 @@ async def admin_dashboard(db: AsyncSession = Depends(get_db)):
     # PROJECTS
     # -------------------------
     total_projects = (
-        await db.execute(text("SELECT COUNT(*) FROM projects"))
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM projects WHERE organization_id = :org_id AND is_archived = false"
+            ),
+            {"org_id": org_id},
+        )
     ).scalar() or 0
 
     projects_last_week = (
         await db.execute(
-            text("SELECT COUNT(*) FROM projects WHERE created_at >= :week_ago"),
-            {"week_ago": week_ago},
+            text(
+                "SELECT COUNT(*) FROM projects WHERE organization_id = :org_id AND created_at >= :week_ago AND is_archived = false"
+            ),
+            {"org_id": org_id, "week_ago": week_ago},
         )
     ).scalar() or 0
 
@@ -59,17 +86,20 @@ async def admin_dashboard(db: AsyncSession = Depends(get_db)):
     # -------------------------
     total_vulns = (
         await db.execute(
-            text("SELECT COUNT(*) FROM vulnerabilities WHERE is_active = TRUE")
+            text(
+                "SELECT COUNT(*) FROM vulnerabilities v JOIN projects p ON v.project_id = p.id WHERE is_active = TRUE AND p.organization_id = :org_id"
+            ),
+            {"org_id": org_id},
         )
     ).scalar() or 0
 
     vulns_last_week = (
         await db.execute(
             text(
-                "SELECT COUNT(*) FROM vulnerabilities "
-                "WHERE created_at >= :week_ago AND is_active = TRUE"
+                "SELECT COUNT(*) FROM vulnerabilities v JOIN projects p ON v.project_id = p.id "
+                "WHERE is_active = TRUE AND p.organization_id = :org_id AND v.created_at >= :week_ago"
             ),
-            {"week_ago": week_ago},
+            {"org_id": org_id, "week_ago": week_ago},
         )
     ).scalar() or 0
 
@@ -82,12 +112,21 @@ async def admin_dashboard(db: AsyncSession = Depends(get_db)):
     # -------------------------
     # SBOMS
     # -------------------------
-    total_sboms = (await db.execute(text("SELECT COUNT(*) FROM sboms"))).scalar() or 0
+    total_sboms = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM sboms s JOIN projects p ON s.project_id = p.id WHERE p.organization_id = :org_id"
+            ),
+            {"org_id": org_id},
+        )
+    ).scalar() or 0
 
     sboms_last_week = (
         await db.execute(
-            text("SELECT COUNT(*) FROM sboms " "WHERE created_at >= :week_ago"),
-            {"week_ago": week_ago},
+            text(
+                "SELECT COUNT(*) FROM sboms s JOIN projects p ON s.project_id = p.id WHERE p.organization_id = :org_id AND s.created_at >= :week_ago "
+            ),
+            {"org_id": org_id, "week_ago": week_ago},
         )
     ).scalar() or 0
 
@@ -110,6 +149,7 @@ async def admin_dashboard(db: AsyncSession = Depends(get_db)):
 # ----- ADMIN GET ALL USERS -----
 @router.get("/users")
 async def get_all_users(
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1),
@@ -121,8 +161,14 @@ async def get_all_users(
     Retrieve all users with pagination + filters (excluding admins)
     """
 
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
     # Base query
-    stmt = select(User).where(User.role != "admin")
+    stmt = select(User).where(
+        User.role != "admin",
+        User.organization_id == current_user.organization_id,
+    )
 
     # Search by name or email
     if search:
@@ -199,11 +245,19 @@ async def get_all_users(
 
 # ----- ADMIN GET DEVELOPERS ONLY -----
 @router.get("/users/developers")
-async def get_developers(db: AsyncSession = Depends(get_db)):
+async def get_developers(
+    current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
     """
     Return list of users where role = 'developer'
     """
-    stmt = select(User).where(User.role == "developer")
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+    stmt = select(User).where(
+        User.role == "developer",
+        User.organization_id == current_user.organization_id,
+    )
 
     result = await db.execute(stmt)
     users = result.scalars().all()
@@ -227,6 +281,7 @@ async def get_developers(db: AsyncSession = Depends(get_db)):
 async def update_user(
     user_id: int,
     payload: UserUpdate,
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -235,8 +290,15 @@ async def update_user(
     """
 
     # Find user (excluding admins)
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
     result = await db.execute(
-        select(User).where(User.id == user_id, User.role != "admin")
+        select(User).where(
+            User.id == user_id,
+            User.role != "admin",
+            User.organization_id == current_user.organization_id,
+        )
     )
     user = result.scalar_one_or_none()
     if not user:
@@ -275,6 +337,7 @@ async def update_user(
 async def toggle_user_status(
     user_id: int,
     is_active: bool = Body(..., embed=True),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -284,8 +347,15 @@ async def toggle_user_status(
     """
 
     # Find user (excluding admins)
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
     result = await db.execute(
-        select(User).where(User.id == user_id, User.role != "admin")
+        select(User).where(
+            User.id == user_id,
+            User.role != "admin",
+            User.organization_id == current_user.organization_id,
+        )
     )
     user = result.scalar_one_or_none()
     if not user:

@@ -46,6 +46,8 @@ class User(Base):
     two_factor_enabled = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
+    last_login_ip = Column(String(64), nullable=True)
+    last_login_user_agent = Column(Text, nullable=True)
     github_token = Column(String, nullable=True)
 
 

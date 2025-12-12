@@ -46,6 +46,13 @@ class OrganizationSettingsUpdate(BaseModel):
     organization_name: Optional[str] = None
 
 
+class NotificationSettingsUpdate(BaseModel):
+    email_notifications: Optional[bool] = None
+    vulnerability_alerts: Optional[bool] = None
+    weekly_reports: Optional[bool] = None
+    user_activity_alerts: Optional[bool] = None
+
+
 class OrganizationCreateRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
     require_two_factor: bool = False
