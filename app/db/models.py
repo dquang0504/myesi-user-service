@@ -90,6 +90,41 @@ class OrganizationSettings(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash = Column(Text, unique=True, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used = Column(Boolean, default=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    request_ip = Column(String(64), nullable=True)
+    request_user_agent = Column(Text, nullable=True)
+    used_ip = Column(String(64), nullable=True)
+    used_user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    principal_type = Column(String(32), nullable=False)
+    principal_id = Column(Integer, nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_activity_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    idle_timeout_minutes = Column(Integer, nullable=False)
+    ip = Column(String(64), nullable=True)
+    user_agent = Column(Text, nullable=True)
+
+
 # SBOM table
 class SBOM(Base):
     __tablename__ = "sboms"
