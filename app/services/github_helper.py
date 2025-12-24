@@ -2,8 +2,10 @@ import hashlib
 import hmac
 import os
 from typing import Optional
+import logging
+from fastapi import HTTPException
 
-from fastapi import HTTPException, logger
+logger = logging.getLogger(__name__)
 
 
 def verify_signature(body: bytes, signature_header: Optional[str]) -> None:

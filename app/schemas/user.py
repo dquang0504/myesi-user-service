@@ -1,6 +1,7 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from datetime import datetime
+
 
 
 # ---------------------------
@@ -32,11 +33,10 @@ class UserProfileUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     email: Optional[EmailStr] = None
     current_password: Optional[str] = Field(None, min_length=8, max_length=255)
-    current_password: Optional[str] = Field(None, min_length=8, max_length=255)
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str = Field(..., min_length=8, max_length=255)
+    current_password: str = Field(..., min_length=1, max_length=255)
     new_password: str = Field(..., min_length=8, max_length=255)
 
 
@@ -49,10 +49,17 @@ class TwoFactorSetupResponse(BaseModel):
     otp_auth_url: str
 
 
+class PasswordResetCompleteRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=512)
+    new_password: str = Field(..., min_length=8, max_length=255)
+
+
 # ---------------------------
 # Response models
 # ---------------------------
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     email: EmailStr
@@ -63,14 +70,12 @@ class UserOut(BaseModel):
     created_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
-
 
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: Optional[int] = 15 * 60
+    session_id: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
@@ -79,6 +84,7 @@ class LoginResponse(BaseModel):
     expires_in: Optional[int] = 15 * 60
     user: UserOut
     two_factor_required: Optional[bool] = False
+    session_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -91,3 +97,4 @@ class TokenData(BaseModel):
     role: Optional[str] = None
     organization_id: Optional[int] = None
     account_type: Optional[str] = None
+    sid: Optional[str] = None

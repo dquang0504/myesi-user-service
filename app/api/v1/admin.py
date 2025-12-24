@@ -25,7 +25,6 @@ async def admin_dashboard(
             detail="Organization context is required for admin dashboard",
         )
     org_id = current_user.organization_id
-    print("This is org_id: ", org_id)
     now = datetime.utcnow()
     week_ago = now - timedelta(days=7)
 
@@ -243,7 +242,6 @@ async def get_all_users(
     return {"data": {"users": user_list, "pagination": pagination}}
 
 
-# ----- ADMIN GET DEVELOPERS ONLY -----
 @router.get("/users/developers")
 async def get_developers(
     current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)
@@ -251,7 +249,7 @@ async def get_developers(
     """
     Return list of users where role = 'developer'
     """
-    if current_user.role != "admin":
+    if current_user.role != "admin" and current_user.role != "analyst":
         raise HTTPException(status_code=403, detail="Admin role required")
 
     stmt = select(User).where(

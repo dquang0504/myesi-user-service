@@ -1,4 +1,7 @@
+import hashlib
+import hmac
 import logging
+import os
 import uuid
 import fnmatch
 import httpx
@@ -8,7 +11,6 @@ from app.db.session import get_db
 from app.db.models import User
 from app.services.auth import get_current_user
 from app.core.config import settings
-from app.services.github_helper import verify_signature
 
 router = APIRouter(prefix="/auth/github", tags=["GitHub"])
 logger = logging.getLogger("github")
@@ -122,13 +124,27 @@ async def github_repos(current_user: User = Depends(get_current_user)):
 
     async with httpx.AsyncClient() as client:
         # Step 1: lấy danh sách repo
-        res = await client.get(
-            "https://api.github.com/user/repos",
-            headers=headers,
-            params={"per_page": 100, "affiliation": "owner,collaborator"},
-        )
+        try:
+            res = await client.get(
+                "https://api.github.com/user/repos",
+                headers=headers,
+                params={"per_page": 100, "affiliation": "owner,collaborator"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"GitHub API request failed: {exc}"
+            )
+
+        if res.status_code in (401, 403):
+            raise HTTPException(
+                status_code=403,
+                detail="GitHub access token invalid or expired. Please reconnect GitHub.",
+            )
         if res.status_code != 200:
-            raise HTTPException(status_code=res.status_code, detail=res.text)
+            raise HTTPException(
+                status_code=res.status_code,
+                detail=f"Failed to fetch GitHub repositories: {res.text}",
+            )
 
         repos = res.json()
         results = []
@@ -172,26 +188,37 @@ async def github_status(current_user: User = Depends(get_current_user)):
 @router.post("")
 async def github_webhook(
     request: Request,
-    x_github_event: str = Header(None, convert_underscores=False),
-    x_hub_signature_256: str = Header(None, convert_underscores=False),
+    x_github_event: str | None = Header(default=None, alias="X-GitHub-Event"),
+    x_hub_signature_256: str | None = Header(default=None, alias="X-Hub-Signature-256"),
 ):
-    """
-    Entry point cho GitHub Webhook.
-    Bước 1: verify signature (nếu có secret).
-    Bước 2: parse push event và log ra 1 dòng.
-    """
-
     raw_body = await request.body()
-    verify_signature(raw_body, x_hub_signature_256)
+
+    secret = os.getenv("GITHUB_WEBHOOK_SECRET")
+    if secret:
+        if not x_hub_signature_256 or not x_hub_signature_256.startswith("sha256="):
+            raise HTTPException(status_code=401, detail="Missing or invalid signature")
+
+        expected = (
+            "sha256="
+            + hmac.new(
+                secret.encode("utf-8"),
+                raw_body,
+                hashlib.sha256,
+            ).hexdigest()
+        )
+
+        if not hmac.compare_digest(expected, x_hub_signature_256):
+            raise HTTPException(status_code=401, detail="Invalid signature")
 
     payload = await request.json()
 
-    # Chỉ cần log push trước, các event khác log nhẹ
     if x_github_event == "push":
         repo = payload.get("repository", {}).get("full_name", "unknown/repo")
         ref = payload.get("ref", "")
         branch = (
-            ref.split("/", 2)[-1] if ref.startswith("refs/heads/") else ref or "unknown"
+            ref.split("/", 2)[-1]
+            if ref.startswith("refs/heads/")
+            else (ref or "unknown")
         )
         commits = payload.get("commits", [])
         pusher = (
@@ -212,5 +239,4 @@ async def github_webhook(
     else:
         logger.info("Received GitHub event: %s", x_github_event)
 
-    # Sau này chỗ này sẽ là nơi enqueue job scan, v.v...
     return {"ok": True}

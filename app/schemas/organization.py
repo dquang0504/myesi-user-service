@@ -64,7 +64,6 @@ class AdminInviteResult(BaseModel):
     id: int
     name: Optional[str] = None
     email: EmailStr
-    temporary_password: str
 
 
 class OrganizationCreateResponse(BaseModel):
