@@ -3,7 +3,6 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from datetime import datetime
 
 
-
 # ---------------------------
 # Request model
 # ---------------------------
